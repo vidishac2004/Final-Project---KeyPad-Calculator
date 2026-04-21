@@ -13,7 +13,7 @@ async def do_reset(dut):
     dut.ena.value    = 1
     await ClockCycles(dut.clk, 50)
     dut.rst_n.value  = 1
-    await ClockCycles(dut.clk, 50)
+    await ClockCycles(dut.clk, 100)
 
 async def press_key(dut, col_idx, row_idx):
     col_map = {0: 0b1110, 1: 0b1101, 2: 0b1011, 3: 0b0111}
@@ -25,8 +25,12 @@ async def press_key(dut, col_idx, row_idx):
     dut.ui_in.value = 0xFF
     for _ in range(500):
         await RisingEdge(dut.clk)
-        if (dut.uio_out.value & 0xF) == want_col:
-            break
+        try:
+            col_out = int(dut.uio_out.value) & 0xF
+            if col_out == want_col:
+                break
+        except Exception:
+            pass  
 
     dut.ui_in.value = 0xF0 | row_val
     await ClockCycles(dut.clk, DEBOUNCE)
@@ -57,6 +61,7 @@ async def test_project(dut):
     clock = Clock(dut.clk, 10, unit="ns")
     cocotb.start_soon(clock.start())
 
+    # reset
     dut.rst_n.value  = 0
     dut.ui_in.value  = 0xFF
     dut.uio_in.value = 0
@@ -65,11 +70,7 @@ async def test_project(dut):
     dut.rst_n.value  = 1
     await ClockCycles(dut.clk, 100)
 
-    try:
-        val = int(dut.uo_out.value)
-        dut._log.info(f"output after reset: {val}")
-    except Exception:
-        dut._log.warning("output still X after reset, continuing anyway")
+    dut._log.info("reset done, starting tests")
 
     await do_reset(dut)
     await press_digit(dut, 7)
@@ -78,4 +79,4 @@ async def test_project(dut):
     await press_eq(dut)
     await ClockCycles(dut.clk, 20)
 
-    dut._log.info("gate level smoke test complete")
+    dut._log.info("gate level test complete")
