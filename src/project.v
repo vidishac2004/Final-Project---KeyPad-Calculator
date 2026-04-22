@@ -1,53 +1,68 @@
 /*
- * Copyright (c) 2024 Your Name
+ * Copyright (c) 2024 Vidisha Chopra
  * SPDX-License-Identifier: Apache-2.0
  */
 
 `default_nettype none
 
 module tt_um_vidishac2004_calc (
-    input  wire [7:0] ui_in,    // dedicated inputs
-    output wire [7:0] uo_out,   // dedicated outputs
-    input  wire [7:0] uio_in,   // bidirectional inputs
-    output wire [7:0] uio_out,  // bidirectional outputs
-    output wire [7:0] uio_oe,   // 1=output, 0=input
-    input  wire       ena,      // always 1
-    input  wire       clk,      // clock
-    input  wire       rst_n     // active-low reset
+    input  wire [7:0] ui_in,
+    output wire [7:0] uo_out,
+    input  wire [7:0] uio_in,
+    output wire [7:0] uio_out,
+    output wire [7:0] uio_oe,
+    input  wire       ena,
+    input  wire       clk,
+    input  wire       rst_n
 );
 
     wire [3:0] row;
     wire [3:0] col;
     wire [7:0] result;
+    wire       uart_tx;
+    wire       result_valid;
 
     assign row = ui_in[3:0];
 
     calculator_to_led u_calc (
-        .clk(clk),
-        .reset(rst_n),   
-        .row(row),
-        .col(col),
-        .result(result)
+        .clk         (clk),
+        .reset       (rst_n),
+        .row         (row),
+        .col         (col),
+        .result      (result),
+        .result_valid(result_valid)
+    );
+
+    uart_printer u_uart (
+        .clk         (clk),
+        .reset       (~rst_n),
+        .result      (result),
+        .result_valid(result_valid),
+        .tx          (uart_tx)
     );
 
     assign uo_out = result;
 
     assign uio_out[3:0] = col;
-    assign uio_oe[3:0]  = 4'b1111;   // these are outputs
+    assign uio_out[4]   = uart_tx;
+    assign uio_out[7:5] = 3'b000;
 
-    assign uio_out[7:4] = 4'b0000;
-    assign uio_oe[7:4]  = 4'b0000;   // inputs / unused
+    assign uio_oe[3:0]  = 4'b1111;  // col outputs
+    assign uio_oe[4]    = 1'b1;     // uart tx output
+    assign uio_oe[7:5]  = 3'b000;   // unused
 
     wire _unused = &{ena, ui_in[7:4], uio_in, 1'b0};
 
 endmodule
+
 
 module calculator_to_led(
     input  logic       clk,
     input  logic       reset,
     input  logic [3:0] row,
     output logic [3:0] col,
-    output logic [7:0] result
+    output logic [7:0] result,
+    output logic       result_valid
 );
 
     logic rst;
@@ -60,27 +75,163 @@ module calculator_to_led(
     assign clear = key_valid && (key_type == 3'd3);
 
     keypad_FSM u_keypad (
-        .clk(clk),
-        .reset(rst),
-        .row(row),
-        .col(col),
+        .clk        (clk),
+        .reset      (rst),
+        .row        (row),
+        .col        (col),
         .decoded_key(decoded_key),
-        .key_type(key_type),
-        .key_valid(key_valid)
+        .key_type   (key_type),
+        .key_valid  (key_valid)
     );
 
     calculator_control dut1(
-        .clk(clk),
-        .reset(rst),
-        .key_valid(key_valid),
-        .decoded_key(decoded_key),
-        .key_type(key_type),
-        .clear(clear),
-        .result(result)
+        .clk         (clk),
+        .reset       (rst),
+        .key_valid   (key_valid),
+        .decoded_key (decoded_key),
+        .key_type    (key_type),
+        .clear       (clear),
+        .result      (result),
+        .result_valid(result_valid)
     );
 
 endmodule
 
+
+// TinyTapeout default clock is 50 MHz. Baud Rate= 115200
+// 50_000_000 / 115200 = 434 cycles per bit
+module uart_printer (
+    input  logic       clk,
+    input  logic       reset,
+    input  logic [7:0] result,
+    input  logic       result_valid,
+    output logic       tx
+);
+
+    localparam CLK_FREQ  = 50_000_000;
+    localparam BAUD_RATE = 115_200;
+    localparam CLKS_PER_BIT = CLK_FREQ / BAUD_RATE;  // 434
+
+    logic [7:0] msg  [0:13];
+    logic [3:0] msg_len;
+    logic [3:0] byte_idx;
+
+    logic [9:0]  shift_reg;   // start + 8 data + stop
+    logic [9:0]  bit_timer;
+    logic [3:0]  bit_count;
+    logic        sending;
+
+    logic [7:0] result_latch;
+
+    typedef enum logic [1:0] {
+        IDLE,
+        BUILD,
+        SEND
+    } state_t;
+
+    state_t state;
+
+    logic [7:0] hundreds, tens, units, remainder;
+
+    always_ff @(posedge clk or posedge reset) begin
+        if (reset) begin
+            state        <= IDLE;
+            tx           <= 1'b1;
+            sending      <= 1'b0;
+            byte_idx     <= 4'd0;
+            bit_count    <= 4'd0;
+            bit_timer    <= 10'd0;
+            shift_reg    <= 10'h3FF;
+            result_latch <= 8'd0;
+            msg_len      <= 4'd0;
+        end else begin
+            case (state)
+
+                IDLE: begin
+                    tx <= 1'b1;
+                    if (result_valid) begin
+                        result_latch <= result;
+                        state        <= BUILD;
+                    end
+                end
+
+                BUILD: begin
+                    msg[0] <= "R";
+                    msg[1] <= "e";
+                    msg[2] <= "s";
+                    msg[3] <= "u";
+                    msg[4] <= "l";
+                    msg[5] <= "t";
+                    msg[6] <= ":";
+                    msg[7] <= " ";
+
+                    hundreds  = result_latch / 100;
+                    remainder = result_latch % 100;
+                    tens      = remainder / 10;
+                    units     = remainder % 10;
+
+                    if (hundreds > 0) begin
+                        msg[8]  <= "0" + hundreds;
+                        msg[9]  <= "0" + tens;
+                        msg[10] <= "0" + units;
+                        msg[11] <= "\r";
+                        msg[12] <= "\n";
+                        msg_len <= 4'd13;
+                    end else if (tens > 0) begin
+                        msg[8]  <= "0" + tens;
+                        msg[9]  <= "0" + units;
+                        msg[10] <= "\r";
+                        msg[11] <= "\n";
+                        msg_len <= 4'd12;
+                    end else begin
+                        msg[8]  <= "0" + units;
+                        msg[9]  <= "\r";
+                        msg[10] <= "\n";
+                        msg_len <= 4'd11;
+                    end
+
+                    byte_idx  <= 4'd0;
+                    state     <= SEND;
+                end
+
+                SEND: begin
+                    if (!sending) begin
+                        if (byte_idx < msg_len) begin
+                            shift_reg <= {1'b1, msg[byte_idx], 1'b0};
+                            bit_count <= 4'd0;
+                            bit_timer <= 10'd0;
+                            sending   <= 1'b1;
+                        end else begin
+                            state <= IDLE;
+                            tx    <= 1'b1;
+                        end
+                    end else begins
+                        if (bit_timer >= CLKS_PER_BIT - 1) begin
+                            bit_timer <= 10'd0;
+                            tx        <= shift_reg[0];
+                            shift_reg <= {1'b1, shift_reg[9:1]};
+                            bit_count <= bit_count + 1;
+                            if (bit_count == 4'd9) begin
+                                sending   <= 1'b0;
+                                byte_idx  <= byte_idx + 1;
+                            end
+                        end else begin
+                            bit_timer <= bit_timer + 1;
+                        end
+                    end
+                end
+
+                default: state <= IDLE;
+            endcase
+        end
+    end
+
+endmodule
+
+
+// ---------------------------------------------------------------------------
+// keypad_FSM — unchanged from original
+// ---------------------------------------------------------------------------
 module keypad_FSM(
     input  logic       clk,
     input  logic       reset,
@@ -114,7 +265,7 @@ module keypad_FSM(
     localparam logic [2:0] TYPE_EQUALS = 3'd2;
     localparam logic [2:0] TYPE_CLEAR  = 3'd3;
 
-    localparam int DEBOUNCE_MAX =  250000;
+    localparam int DEBOUNCE_MAX = 250000;
 
     always_ff @(posedge clk or posedge reset) begin
         if (reset) begin
@@ -261,6 +412,11 @@ module keypad_FSM(
 
 endmodule
 
+
+// ---------------------------------------------------------------------------
+// calculator_control — add result_valid output
+// Pulses high for one cycle when load_result fires
+// ---------------------------------------------------------------------------
 module calculator_control(
     input  logic       clk,
     input  logic       reset,
@@ -268,7 +424,8 @@ module calculator_control(
     input  logic [3:0] decoded_key,
     input  logic [2:0] key_type,
     input  logic       clear,
-    output logic [7:0] result
+    output logic [7:0] result,
+    output logic       result_valid
 );
 
     logic load_A, load_B, load_result, en_buffer, clr_input_buffer, start_alu;
@@ -281,23 +438,25 @@ module calculator_control(
     logic [7:0] alu_result;
     logic       alu_done, alu_error;
 
+    assign result_valid = load_result;
+
     calculator_FSM calc_fsm (
-        .clk(clk),
-        .reset(reset),
-        .key_valid(key_valid),
-        .alu_done(alu_done),
-        .alu_error(alu_error),
-        .clear(clear),
-        .decoded_key(decoded_key),
-        .key_type(key_type),
-        .load_A(load_A),
-        .load_B(load_B),
-        .load_result(load_result),
-        .load_op(load_op),
-        .en_buffer(en_buffer),
+        .clk            (clk),
+        .reset          (reset),
+        .key_valid      (key_valid),
+        .alu_done       (alu_done),
+        .alu_error      (alu_error),
+        .clear          (clear),
+        .decoded_key    (decoded_key),
+        .key_type       (key_type),
+        .load_A         (load_A),
+        .load_B         (load_B),
+        .load_result    (load_result),
+        .load_op        (load_op),
+        .en_buffer      (en_buffer),
         .clr_input_buffer(clr_input_buffer),
-        .start_alu(start_alu),
-        .op_sel(op_sel_fsm)
+        .start_alu      (start_alu),
+        .op_sel         (op_sel_fsm)
     );
 
     always_ff @(posedge clk or posedge reset) begin
@@ -310,121 +469,44 @@ module calculator_control(
     end
 
     input_buffer inst_input_buffer (
-        .clk(clk),
-        .reset(reset),
-        .clear(clear),
-        .en_buffer(en_buffer),
-        .key_valid(key_valid),
-        .decoded_key(decoded_key),
-        .key_type(key_type),
+        .clk            (clk),
+        .reset          (reset),
+        .en_buffer      (en_buffer),
+        .key_valid      (key_valid),
+        .decoded_key    (decoded_key),
+        .key_type       (key_type),
         .clr_input_buffer(clr_input_buffer),
-        .buffer_value(buffer_value)
+        .buffer_value   (buffer_value)
     );
 
     operand_regs inst_operand_regs (
-        .clk(clk),
-        .reset(reset),
-        .clr_regs(clear),
-        .load_A(load_A),
-        .load_B(load_B),
-        .load_result(load_result),
+        .clk         (clk),
+        .reset       (reset),
+        .clr_regs    (clear),
+        .load_A      (load_A),
+        .load_B      (load_B),
+        .load_result (load_result),
         .buffer_value(buffer_value),
-        .alu_result(alu_result),
-        .A(A),
-        .B(B),
-        .result(result)
+        .alu_result  (alu_result),
+        .A           (A),
+        .B           (B),
+        .result      (result)
     );
 
     alu inst_alu (
-        .clk(clk),
-        .reset(reset),
-        .start_alu(start_alu),
-        .A(A),
-        .B(B),
-        .op_sel(op_sel_reg),
+        .clk       (clk),
+        .reset     (reset),
+        .start_alu (start_alu),
+        .A         (A),
+        .B         (B),
+        .op_sel    (op_sel_reg),
         .alu_result(alu_result),
-        .alu_done(alu_done),
-        .alu_error(alu_error)
+        .alu_done  (alu_done),
+        .alu_error (alu_error)
     );
 
 endmodule
 
-module input_buffer(
-    input  logic       clk,
-    input  logic       reset,
-    input  logic       clear,
-    input  logic       en_buffer,
-    input  logic       key_valid,
-    input  logic [3:0] decoded_key,
-    input  logic [2:0] key_type,
-    input  logic       clr_input_buffer,
-    output logic [7:0] buffer_value
-);
-
-    always_ff @(posedge clk or posedge reset) begin
-        if (reset) begin
-            buffer_value <= 8'd0;
-        end
-        else if (clear) begin
-            buffer_value <= 8'd0;
-        end
-        else if (clr_input_buffer && en_buffer && key_valid && key_type == 3'd0) begin
-            buffer_value <= {4'd0, decoded_key};
-        end
-        else if (clr_input_buffer) begin
-            buffer_value <= 8'd0;
-        end
-        else if (en_buffer && key_valid && key_type == 3'd0) begin
-            buffer_value <= {buffer_value[3:0], decoded_key};
-        end
-    end
-
-endmodule
-
-module operand_regs(
-    input  logic       clk,
-    input  logic       reset,
-    input  logic       clr_regs,
-    input  logic       load_A,
-    input  logic       load_B,
-    input  logic       load_result,
-    input  logic [7:0] buffer_value,
-    input  logic [7:0] alu_result,
-    output logic [7:0] A,
-    output logic [7:0] B,
-    output logic [7:0] result
-);
-
-    logic [7:0] operand_value;
-
-    always_comb begin
-        operand_value = ({4'b0, buffer_value[7:4]} << 3) +
-                        ({4'b0, buffer_value[7:4]} << 1) +
-                        {4'b0, buffer_value[3:0]};
-    end
-
-    always_ff @(posedge clk or posedge reset) begin
-        if (reset) begin
-            A      <= 8'd0;
-            B      <= 8'd0;
-            result <= 8'd0;
-        end
-        else if (clr_regs) begin
-            A      <= 8'd0;
-            B      <= 8'd0;
-            result <= 8'd0;
-        end
-        else begin
-            if (load_A)
-                A <= operand_value;
-            if (load_B)
-                B <= operand_value;
-            if (load_result)
-                result <= alu_result;
-        end
-    end
-
-endmodule
 
 module calculator_FSM(
     input  logic       clk,
@@ -505,13 +587,9 @@ module calculator_FSM(
                         next_state = LOAD_B;
                 end
 
-                LOAD_B: begin
-                    next_state = START_ALU;
-                end
-
-                START_ALU: begin
-                    next_state = EXECUTE;
-                end
+                LOAD_B:      next_state = START_ALU;
+                START_ALU:   next_state = EXECUTE;
+                LOAD_RESULT: next_state = DISPLAY;
 
                 EXECUTE: begin
                     if (alu_done) begin
@@ -520,10 +598,6 @@ module calculator_FSM(
                         else
                             next_state = LOAD_RESULT;
                     end
-                end
-
-                LOAD_RESULT: begin
-                    next_state = DISPLAY;
                 end
 
                 DISPLAY: begin
@@ -607,6 +681,86 @@ module calculator_FSM(
     end
 
 endmodule
+
+
+module input_buffer(
+    input  logic       clk,
+    input  logic       reset,
+    input  logic       en_buffer,
+    input  logic       key_valid,
+    input  logic [3:0] decoded_key,
+    input  logic [2:0] key_type,
+    input  logic       clr_input_buffer,
+    output logic [7:0] buffer_value
+);
+
+    logic [3:0] last_key;
+
+    always_ff @(posedge clk or posedge reset) begin
+        if (reset) begin
+            buffer_value <= 8'd0;
+            last_key     <= 4'hF;
+        end
+        else if (clr_input_buffer) begin
+            buffer_value <= 8'd0;
+            last_key     <= 4'hF;
+        end
+        else if (en_buffer && key_valid && key_type == 3'd0) begin
+            if (decoded_key != last_key) begin
+                buffer_value <= {buffer_value[3:0], decoded_key};
+                last_key     <= decoded_key;
+            end
+        end
+    end
+
+endmodule
+
+
+module operand_regs(
+    input  logic       clk,
+    input  logic       reset,
+    input  logic       clr_regs,
+    input  logic       load_A,
+    input  logic       load_B,
+    input  logic       load_result,
+    input  logic [7:0] buffer_value,
+    input  logic [7:0] alu_result,
+    output logic [7:0] A,
+    output logic [7:0] B,
+    output logic [7:0] result
+);
+
+    logic [7:0] operand_value;
+
+    always_comb begin
+        operand_value = ({4'b0, buffer_value[7:4]} << 3) +
+                        ({4'b0, buffer_value[7:4]} << 1) +
+                        {4'b0, buffer_value[3:0]};
+    end
+
+    always_ff @(posedge clk or posedge reset) begin
+        if (reset) begin
+            A      <= 8'd0;
+            B      <= 8'd0;
+            result <= 8'd0;
+        end
+        else if (clr_regs) begin
+            A      <= 8'd0;
+            B      <= 8'd0;
+            result <= 8'd0;
+        end
+        else begin
+            if (load_A)
+                A <= operand_value;
+            if (load_B)
+                B <= operand_value;
+            if (load_result)
+                result <= alu_result;
+        end
+    end
+
+endmodule
+
 
 module alu(
     input  logic       clk,
