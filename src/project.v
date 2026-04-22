@@ -108,20 +108,41 @@ module uart_printer (
     output logic       tx
 );
 
-    localparam CLK_FREQ  = 50_000_000;
-    localparam BAUD_RATE = 115_200;
+    localparam CLK_FREQ     = 50_000_000;
+    localparam BAUD_RATE    = 115_200;
     localparam CLKS_PER_BIT = CLK_FREQ / BAUD_RATE;  // 434
 
-    logic [7:0] msg  [0:13];
+    logic [7:0] msg [0:12];
     logic [3:0] msg_len;
     logic [3:0] byte_idx;
 
-    logic [9:0]  shift_reg;   // start + 8 data + stop
+    logic [9:0]  shift_reg;
     logic [9:0]  bit_timer;
     logic [3:0]  bit_count;
     logic        sending;
 
     logic [7:0] result_latch;
+
+    logic [7:0] hundreds, tens, units;
+
+    always_comb begin
+        hundreds = 8'd0;
+        tens     = 8'd0;
+        units    = result_latch;
+
+        if (units >= 8'd200) begin units = units - 8'd200; hundreds = 8'd2; end
+        else if (units >= 8'd100) begin units = units - 8'd100; hundreds = 8'd1; end
+
+        if (units >= 8'd90)      begin units = units - 8'd90;  tens = 8'd9; end
+        else if (units >= 8'd80) begin units = units - 8'd80;  tens = 8'd8; end
+        else if (units >= 8'd70) begin units = units - 8'd70;  tens = 8'd7; end
+        else if (units >= 8'd60) begin units = units - 8'd60;  tens = 8'd6; end
+        else if (units >= 8'd50) begin units = units - 8'd50;  tens = 8'd5; end
+        else if (units >= 8'd40) begin units = units - 8'd40;  tens = 8'd4; end
+        else if (units >= 8'd30) begin units = units - 8'd30;  tens = 8'd3; end
+        else if (units >= 8'd20) begin units = units - 8'd20;  tens = 8'd2; end
+        else if (units >= 8'd10) begin units = units - 8'd10;  tens = 8'd1; end
+    end
 
     typedef enum logic [1:0] {
         IDLE,
@@ -130,8 +151,6 @@ module uart_printer (
     } state_t;
 
     state_t state;
-
-    logic [7:0] hundreds, tens, units, remainder;
 
     always_ff @(posedge clk or posedge reset) begin
         if (reset) begin
@@ -156,42 +175,37 @@ module uart_printer (
                 end
 
                 BUILD: begin
-                    msg[0] <= "R";
-                    msg[1] <= "e";
-                    msg[2] <= "s";
-                    msg[3] <= "u";
-                    msg[4] <= "l";
-                    msg[5] <= "t";
-                    msg[6] <= ":";
-                    msg[7] <= " ";
-
-                    hundreds  = result_latch / 100;
-                    remainder = result_latch % 100;
-                    tens      = remainder / 10;
-                    units     = remainder % 10;
+                    msg[0] <= 8'h52; // R
+                    msg[1] <= 8'h65; // e
+                    msg[2] <= 8'h73; // s
+                    msg[3] <= 8'h75; // u
+                    msg[4] <= 8'h6C; // l
+                    msg[5] <= 8'h74; // t
+                    msg[6] <= 8'h3A; // :
+                    msg[7] <= 8'h20; // space
 
                     if (hundreds > 0) begin
-                        msg[8]  <= "0" + hundreds;
-                        msg[9]  <= "0" + tens;
-                        msg[10] <= "0" + units;
-                        msg[11] <= "\r";
-                        msg[12] <= "\n";
+                        msg[8]  <= 8'h30 + hundreds;
+                        msg[9]  <= 8'h30 + tens;
+                        msg[10] <= 8'h30 + units;
+                        msg[11] <= 8'h0D; // \r
+                        msg[12] <= 8'h0A; // \n
                         msg_len <= 4'd13;
                     end else if (tens > 0) begin
-                        msg[8]  <= "0" + tens;
-                        msg[9]  <= "0" + units;
-                        msg[10] <= "\r";
-                        msg[11] <= "\n";
+                        msg[8]  <= 8'h30 + tens;
+                        msg[9]  <= 8'h30 + units;
+                        msg[10] <= 8'h0D;
+                        msg[11] <= 8'h0A;
                         msg_len <= 4'd12;
                     end else begin
-                        msg[8]  <= "0" + units;
-                        msg[9]  <= "\r";
-                        msg[10] <= "\n";
+                        msg[8]  <= 8'h30 + units;
+                        msg[9]  <= 8'h0D;
+                        msg[10] <= 8'h0A;
                         msg_len <= 4'd11;
                     end
 
-                    byte_idx  <= 4'd0;
-                    state     <= SEND;
+                    byte_idx <= 4'd0;
+                    state    <= SEND;
                 end
 
                 SEND: begin
@@ -205,15 +219,15 @@ module uart_printer (
                             state <= IDLE;
                             tx    <= 1'b1;
                         end
-                    end else begins
+                    end else begin
                         if (bit_timer >= CLKS_PER_BIT - 1) begin
                             bit_timer <= 10'd0;
                             tx        <= shift_reg[0];
                             shift_reg <= {1'b1, shift_reg[9:1]};
                             bit_count <= bit_count + 1;
                             if (bit_count == 4'd9) begin
-                                sending   <= 1'b0;
-                                byte_idx  <= byte_idx + 1;
+                                sending  <= 1'b0;
+                                byte_idx <= byte_idx + 1;
                             end
                         end else begin
                             bit_timer <= bit_timer + 1;
@@ -227,7 +241,6 @@ module uart_printer (
     end
 
 endmodule
-
 
 // ---------------------------------------------------------------------------
 // keypad_FSM — unchanged from original
