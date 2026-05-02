@@ -1,42 +1,51 @@
 ![](../../workflows/gds/badge.svg) ![](../../workflows/docs/badge.svg) ![](../../workflows/test/badge.svg) ![](../../workflows/fpga/badge.svg)
 
-# Tiny Tapeout Verilog Project Template
+# Keypad Calculator
+
+A hardware calculator implemented in SystemVerilog for TinyTapeout. It scans
+a 4x4 matrix keypad, accepts two-digit operands, performs addition,
+subtraction, multiplication, and division, and outputs the 8-bit binary
+result on the assigned output pins. Results are transmitted as a
+decimal string over UART.
 
 - [Read the documentation for project](docs/info.md)
 
-## What is Tiny Tapeout?
+## How it works
 
-Tiny Tapeout is an educational project that aims to make it easier and cheaper than ever to get your digital and analog designs manufactured on a real chip.
+The design has three main components:
 
-To learn more and get started, visit https://tinytapeout.com.
+Keypad FSM — scans the 4x4 keypad matrix by driving each column low one
+at a time and reading the row inputs. When a key is detected it debounces
+the signal over ~10ms and decodes the row/column combination into a key
+value and type (digit, operator, equals, clear).
 
-## Set up your Verilog project
+Calculator FSM — sequences through states to collect operand A, the
+operator, operand B, and then triggers the ALU. Supports up to two-digit
+operands (0-99). The result is latched and held until the next calculation
+begins.
 
-1. Add your Verilog files to the `src` folder.
-2. Edit the [info.yaml](info.yaml) and update information about your project, paying special attention to the `source_files` and `top_module` properties. If you are upgrading an existing Tiny Tapeout project, check out our [online info.yaml migration tool](https://tinytapeout.github.io/tt-yaml-upgrade-tool/).
-3. Edit [docs/info.md](docs/info.md) and add a description of your project.
-4. Adapt the testbench to your design. See [test/README.md](test/README.md) for more information.
+ALU — performs addition, subtraction, shift-and-add multiplication, and
+iterative subtraction division on 8-bit unsigned operands.
 
-The GitHub action will automatically build the ASIC files using [LibreLane](https://www.zerotoasiccourse.com/terminology/librelane/).
+UART transmitter — when a result is ready, transmits "Result: DDD\r\n"
+at 115200 baud over uio[4]. Connect uio[4] to a USB-serial adapter to
+read results in a terminal.
 
-## Enable GitHub actions to build the results page
+## Calculator operation
 
-- [Enabling GitHub Pages](https://tinytapeout.com/faq/#my-github-action-is-failing-on-the-pages-part)
+1. Power on or press reset once at startup
+2. Enter operand A (one or two digits)
+3. Press an operator key (A=+, B=-, C=*, D=/)
+4. Enter operand B (one or two digits)
+5. Press # (equals) to compute
+6. The result appears on uo_out in binary and is printed over UART
+7. Press any digit to start the next calculation — no reset needed
+8. Press * (clear) at any time to reset the calculator state
 
-## Resources
+Reset is only required at startup. Between calculations the * key acts
+as a soft clear.
 
-- [FAQ](https://tinytapeout.com/faq/)
-- [Digital design lessons](https://tinytapeout.com/digital_design/)
-- [Learn how semiconductors work](https://tinytapeout.com/siliwiz/)
-- [Join the community](https://tinytapeout.com/discord)
-- [Build your design locally](https://www.tinytapeout.com/guides/local-hardening/)
+## Keypad wiring
 
-## What next?
-
-- [Submit your design to the next shuttle](https://app.tinytapeout.com/).
-- Edit [this README](README.md) and explain your design, how it works, and how to test it.
-- Share your project on your social network of choice:
-  - LinkedIn [#tinytapeout](https://www.linkedin.com/search/results/content/?keywords=%23tinytapeout) [@TinyTapeout](https://www.linkedin.com/company/100708654/)
-  - Mastodon [#tinytapeout](https://chaos.social/tags/tinytapeout) [@matthewvenn](https://chaos.social/@matthewvenn)
-  - X (formerly Twitter) [#tinytapeout](https://twitter.com/hashtag/tinytapeout) [@tinytapeout](https://twitter.com/tinytapeout)
-  - Bluesky [@tinytapeout.com](https://bsky.app/profile/tinytapeout.com)
+A standard 4x4 matrix membrane keypad is required (e.g. Adafruit 419 or
+equivalent). The keypad has 4 row pins and 4 col
