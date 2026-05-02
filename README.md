@@ -48,4 +48,73 @@ as a soft clear.
 ## Keypad wiring
 
 A standard 4x4 matrix membrane keypad is required (e.g. Adafruit 419 or
-equivalent). The keypad has 4 row pins and 4 col
+equivalent). The keypad has 4 row pins and 4 col.
+
+Rows (inputs to chip):
+- ROW0  (ui_in[0]) — top row: 1, 2, 3, A
+- ROW1  (ui_in[1]) — second row: 4, 5, 6, B
+- ROW2  (ui_in[2]) — third row: 7, 8, 9, C
+- ROW3  (ui_in[3]) — bottom row: *, 0, #, D
+
+Columns (outputs from chip):
+- COL0  (uio[0]) — left column: 1, 4, 7, *
+- COL1  (uio[1]) — second column: 2, 5, 8, 0
+- COL2  (uio[2]) — third column: 3, 6, 9, #
+- COL3  (uio[3]) — right column: A, B, C, D
+
+Key functions:
+- 0-9 — digit input
+- A — addition
+- B — subtraction
+- C — multiplication
+- D — division
+- # — equals
+- * — clear
+ 
+## Output
+
+uo_out[7:0] carries the 8-bit binary result. uo_out[7] is the most
+significant bit and uo_out[0] is the least significant bit. The result
+is unsigned (0 to 255).
+
+uio[4] is the UART TX output at 115200 baud, 8N1. Connect to a
+USB-serial adapter and open a terminal at 115200 baud to see results
+printed in decimal.
+
+## Clock
+
+The design requires a 50 MHz clock. This matches the TinyTapeout default
+clock frequency. The UART baud rate will be incorrect at other frequencies.
+
+## IO
+
+Inputs:
+- ui_in[0] — Keypad ROW0
+- ui_in[1] — Keypad ROW1
+- ui_in[2] — Keypad ROW2
+- ui_in[3] — Keypad ROW3
+- ui_in[7:4] — unused
+
+Outputs:
+- uo_out[7:0] — 8-bit result, unsigned, uo_out[7] is MSB
+
+Bidirectional:
+- uio[0] — Keypad COL0 (output)
+- uio[1] — Keypad COL1 (output)
+- uio[2] — Keypad COL2 (output)
+- uio[3] — Keypad COL3 (output)
+- uio[4] — UART TX at 115200 baud 8N1 (output)
+- uio[7:5] — unused, tied to 0
+
+
+## What is Tiny Tapeout?
+
+Tiny Tapeout is an educational project that aims to make it easier and cheaper
+than ever to get your digital and analog designs manufactured on a real chip.
+To learn more and get started, visit https://tinytapeout.com.
+
+## Resources
+
+- [FAQ](https://tinytapeout.com/faq/)
+- [Digital design lessons](https://tinytapeout.com/digital_design/)
+- [Join the community](https://tinytapeout.com/discord)
